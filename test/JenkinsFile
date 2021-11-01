@@ -1,0 +1,28 @@
+pipeline {
+    agent any
+    parameters {
+        string(DockerFile: 'DockerFiletemp')
+    stages {
+        stage('test') {
+            steps {
+                sh """ sudo pip3 install .   
+                python3 tests.py """
+          }
+    }
+        stage('build') {
+            steps {
+               sh """ sudo docker build -t alison . -f ${DockerFile}
+               echo ${DockerFile}    
+          """ 
+
+         
+        }
+        stage('Deploy') {
+            steps {
+                echo 'Deploying....'
+            }
+        }
+   
+    }
+   
+}
