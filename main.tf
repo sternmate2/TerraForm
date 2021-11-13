@@ -2,10 +2,27 @@
 #############################################################################
 # RESOURCES
 #############################################################################
-# NetWork 
+
+resource "azurerm_storage_account" "test" {
+  name                     = "shahars"
+  resource_group_name      = azurerm_resource_group.test.name
+  location                 = azurerm_resource_group.test.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
+resource "azurerm_storage_container" "test" {
+  name                  = "tfstate"
+  storage_account_name  = azurerm_storage_account.test.name
+  container_access_type = "private"
+}
+
+
 #############################################################################
+# RESOURCES
+
 resource "azurerm_resource_group" "test" {
-  name     = var.resource_group_name
+  name     = "${var.resource_group_name}"
   location = var.location
 }
 
@@ -13,27 +30,24 @@ module "test" {
   source              = "Azure/vnet/azurerm"
   version             = "~> 2.0"
   resource_group_name = azurerm_resource_group.test.name
-  vnet_name           = var.resource_group_name
+  vnet_name           = "var.resource_group_name-${terraform.workspace}"
   address_space       = [var.vnet_cidr_range]
   subnet_prefixes     = var.subnet_prefixes
   subnet_names        = var.subnet_names
   nsg_ids             = {}
 
-  tags = {
-    environment = "dev"
-    costcenter  = "it"
-
-  }
 
   depends_on = [azurerm_resource_group.test]
 }
 
-##########################################################################
+#############################################################################
+# NetWork 
+#############################################################################
 
 
 resource "azurerm_network_interface" "test" {
-  count               = var.env == "prod" ? 2 : 1      
-  name                = "VM1${count.index}-nic"
+  count               = "${terraform.workspace == "prod" ? 2 : 1}"
+  name                = "VM${count.index}-nic-${terraform.workspace}"
   location            = var.location
   resource_group_name = azurerm_resource_group.test.name
 
@@ -49,39 +63,10 @@ resource "azurerm_network_interface" "test" {
 # Machines
 #############################################################################
 
-# Create Network Security Group and rule
-# resource "azurerm_network_security_group" "test" {
-#     name                = "NSG"
-#     location            = "eastus"
-#     resource_group_name = azurerm_resource_group.test.name
-
-#     security_rule {
-#         name                       = "SSH"
-#         priority                   = 1001
-#         direction                  = "Inbound"
-#         access                     = "Allow"
-#         protocol                   = "Tcp"
-#         source_port_range          = "*"
-#         destination_port_range     = "22"
-#         source_address_prefix      = "*"
-#         destination_address_prefix = "*"
-#     }
-
-#     tags = {
-#         environment = "Terraform Demo"
-#     }
-# }
-
-# # Connect the security group to the network interface
-# resource "azurerm_network_interface_security_group_association" "example" {
-#     network_interface_id      = azurerm_network_interface.test[0].id
-#     network_security_group_id = azurerm_network_security_group.test.id
-# }
-
 #############################################################################
 resource "azurerm_virtual_machine" "test" {
-  count = var.env == "prod" ? 2 : 1
-  name                = "MYVM-${count.index}"
+  count = "${terraform.workspace == "prod" ? 2 : 1}"
+  name                = "MYVM-${count.index}-${terraform.workspace}"
   resource_group_name = azurerm_resource_group.test.name
   location            = var.location
   vm_size               = "Standard_DS1_v2"
@@ -97,13 +82,13 @@ resource "azurerm_virtual_machine" "test" {
   os_profile_linux_config {
     disable_password_authentication = true
     ssh_keys {
-      key_data = file("~/.ssh/id_rsa.pub")
+      key_data = data.azurerm_key_vault_secret.secret.value
        path     = "/home/shahars/.ssh/authorized_keys"
     }   
   }   
 
   storage_os_disk {
-    name              = "myosdisk${count.index}"
+    name              = "myosdisk${count.index}-${terraform.workspace}"
     caching           = "ReadWrite"
     create_option     = "FromImage"
     managed_disk_type = "Standard_LRS"
@@ -133,32 +118,6 @@ resource "azurerm_virtual_machine" "test" {
  
  
  
-  # storage_os_disk {
-  #   name              = "myosdisk${count.index +1}"
-  #   caching           = "ReadWrite"
-  #   create_option     = "FromImage"
-  #   managed_disk_type = "Standard_LRS"
-  # }
-  
-  # storage_image_reference {
-  #   publisher = "Canonical"
-  #   offer     = "UbuntuServer"
-  #   sku       = "16.04-LTS"
-  #   version   = "latest"
-  # }  
-  # os_profile {
-  #   computer_name  = "hostname"
-  #   admin_username = "shahars"
-  # }
-  
-  # os_profile_linux_config {
-  #   disable_password_authentication = true
-  #   # ssh_keys {
-    #   key_data = file("~/.ssh/id_rsa.pub")
-    #   path = "/home/shahars/.ssh/authorized_keys"
-    # }
-  
-  #}
 
    
   
@@ -187,22 +146,28 @@ resource "azurerm_virtual_machine" "test" {
 
 
  resource "azurerm_virtual_machine_extension" "test" {
-   count = var.env == "prod" ? 2 : 1
+   count = "${terraform.workspace == "prod" ? 2 : 1}"
    name                = "hostname-${count.index}"
-   virtual_machine_id   = azurerm_virtual_machine.test[count.index].id
+   virtual_machine_id   = [azurerm_virtual_machine.test[count.index].id]
    publisher            = "Microsoft.Azure.Extensions"
    type                 = "CustomScript"
    type_handler_version = "2.0"
 
-   settings = <<SETTINGS
-     {
-         "commandToExecute": "cd /home/shahars && mkdir ./App"
+   protected_settings = <<PROT
+    {
+        "script": "${base64encode(file(var.script))}"
+    }
+    PROT
+ 
 
-     }
-
- SETTINGS
-
+#    settings = <<SETTINGS
+# #      {
+# # "commandToExecute": "bash script.sh"
+# #      }
+# #    SETTINGS  
 }
+
+
 
 # git clone git@github.com:eToro-bootcamp/BootcapProject.git
 
@@ -268,6 +233,13 @@ resource "azurerm_lb_backend_address_pool" "test" {
   name            = "BackEndAddressPool"
 }
 
+resource "azurerm_network_interface_backend_address_pool_association" "test" {
+   count = "${terraform.workspace == "production" ? 2 : 1}"
+   network_interface_id    = [azurerm_network_interface.test[count.index].id]
+   ip_configuration_name   = "BackEnd"
+   backend_address_pool_id = azurerm_lb_backend_address_pool.test.id 
+   }
+
 resource "azurerm_lb_probe" "test" {
   resource_group_name = azurerm_resource_group.test.name
   loadbalancer_id     = azurerm_lb.LB.id
@@ -294,17 +266,41 @@ resource "azurerm_availability_set" "test" {
 
 }
 
-resource "azurerm_network_interface_backend_address_pool_association" "test" {
-  count = var.env == "prod" ? 2 : 1
-  network_interface_id    = azurerm_network_interface.test[count.index].id
-  ip_configuration_name   = "internal"
-  backend_address_pool_id = azurerm_lb_backend_address_pool.test.id
+#############################################################################
+# Security 
+#############################################################################
+
+# Create Network Security Group and rule
+resource "azurerm_network_security_group" "test" {
+    name                = "NSG"
+    location            = azurerm_resource_group.test.location
+    resource_group_name = azurerm_resource_group.test.name
+
+    security_rule {
+        name                       = "port80"
+        priority                   = 1001
+        direction                  = "Inbound"
+        access                     = "Allow"
+        protocol                   = "Tcp"
+        source_port_range          = "*"
+        destination_port_range     = "80"
+        source_address_prefix      = "34.99.159.243/32"
+        destination_address_prefix = "*"
+    }
 }
 
-data "azurerm_public_ip" "test" {
-  name                = azurerm_public_ip.LBIP.name
-  resource_group_name = var.resource_group_name
+# Connect the security group to the network interface
+resource "azurerm_network_interface_security_group_association" "example" {
+    count = "${terraform.workspace == "production" ? 2 : 1}"
+    network_interface_id      = [azurerm_network_interface.test[count.index].id]
+    network_security_group_id = azurerm_network_security_group.test.id
 }
+
+
+# data "azurerm_public_ip" "test" {
+#   name                = azurerm_public_ip.LBIP.name
+#   resource_group_name = var.resource_group_name
+# }
 
 
 # resource "null_resource" "readcontentfile" {
@@ -314,47 +310,38 @@ data "azurerm_public_ip" "test" {
 # }
 
 
-resource "null_resource" remoteExecProvisionerWFolder {
+# resource "null_resource" remoteExecProvisionerWFolder {
 
-  provisioner "file" {
-    source      = "/home/shahars/ShaharTF/test2.txt"
-    destination = "/home/shahars/.ssh/test.txt"
-  }
-  connection {
-    bastion_host = "13.90.255.58" 
-    host         = "80.0.0.4"
-    user         = "shahars"
-    private_key  = "${file("~/.ssh/id_rsa")}"
-  }
+#   provisioner "file" {
+#     source      = "/home/shahars/ShaharTF/test2.txt"
+#     destination = "/home/shahars/.ssh/test.txt"
+#   }
+#   connection {
+#     bastion_host = "13.90.255.58" 
+#     host         = "80.0.0.4"
+#     user         = "shahars"
+#     private_key  = "${file("~/.ssh/id_rsa")}"
+#   }
 
-}
+# }
 #############################################################################
 # OutPut For Debug
 #############################################################################
-
-# data "azurerm_key_vault" "key_vault" {
-#     name = "ShaharMyKeyVault"
-#     resource_group_name = "shahar-azuretask-rg"
-# }
-
-# data "azurerm_key_vault_secret" "test" {
-#   name      = "SshPrivateKey"
-#   key_vault_id = "/subscriptions/0df0b217-e303-4931-bcbf-af4fe070d1ac/resourceGroups/shahar-azuretask-rg/providers/Microsoft.KeyVault/vaults/ShaharMyKeyVault"
-# }
 
 
 # output "secret_value" {
 #   value = data.azurerm_key_vault_secret.test.value
 # }
 
-output "virtual_network_id" {
-  value = data.azurerm_virtual_network.shaharbastion.id
-} 
-
-output "vnet_id" {
-  value = module.test.vnet_id
+data "azurerm_key_vault" "kv" {
+  name                = "SternMateKeyVault"
+  resource_group_name = "ShaharTF"
+}
+data "azurerm_key_vault_secret" "secret" {
+  name         = "PublicKey"
+  key_vault_id = data.azurerm_key_vault.kv.id
 }
 
-output "netwrk_id" {
-  value = azurerm_network_interface.test[0].id
-}
+
+
+

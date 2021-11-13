@@ -31,6 +31,10 @@ variable "env" {
   type    = string
 }
 
+variable "script"{
+    type = string
+    default = "script.sh"
+}
 
 # resource "azurerm_key_vault_key" "ShaharMyKeyVault" {
 #   # (resource arguments)
